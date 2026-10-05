@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -11,6 +12,58 @@ b = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(b)
 
 class Tests(unittest.TestCase):
+    def test_reads_saved_timeout_literals(self):
+        for text, expected in [('GRUB_TIMEOUT=25\n', 25), ('GRUB_TIMEOUT="25" # comment\n', 25), ('export GRUB_TIMEOUT=25\n', 25), ('GRUB_TIMEOUT=5\nGRUB_TIMEOUT=25\n', 25), ('GRUB_TIMEOUT=-1\n', -1)]:
+            self.assertEqual(b.grub_timeout_from_text(text), expected)
+
+    def test_dynamic_timeout_is_unknown_without_execution(self):
+        self.assertIsNone(b.grub_timeout_from_text('GRUB_TIMEOUT=$(touch /tmp/not-executed)'))
+        self.assertIsNone(b.grub_timeout_from_text('GRUB_TIMEOUT=$OTHER'))
+        self.assertIsNone(b.grub_timeout_from_text('GRUB_TIMEOUT="unfinished'))
+
+    def test_reads_timeout_after_writing_configuration(self):
+        with tempfile.TemporaryDirectory() as d:
+            source, fragments = Path(d) / 'grub', Path(d) / 'grub.d'
+            source.write_text(b.update_grub('GRUB_TIMEOUT=5\n', {'GRUB_TIMEOUT': 25}))
+            fragments.mkdir()
+            def paths(value):
+                return source if value == '/etc/default/grub' else fragments
+            with patch.object(b, 'Path', side_effect=paths):
+                self.assertEqual(b.configured_timeout('grub'), 25)
+            (fragments / 'override.cfg').write_text('GRUB_TIMEOUT=30\n')
+            with patch.object(b, 'Path', side_effect=paths):
+                self.assertEqual(b.configured_timeout('grub'), 30)
+
+    def test_systemd_timeout_reads_persistent_efi_override(self):
+        variable = Mock()
+        variable.read_bytes.return_value = b'\x07\x00\x00\x00' + '25\x00'.encode('utf-16-le')
+        with patch.object(b, 'Path', return_value=variable), patch.object(b, 'run') as commands:
+            self.assertEqual(b.configured_timeout('systemd-boot'), 25)
+            commands.assert_not_called()
+        variable.read_bytes.return_value = b'\x07\x00\x00\x00' + 'menu-force\x00'.encode('utf-16-le')
+        with patch.object(b, 'Path', return_value=variable):
+            self.assertEqual(b.configured_timeout('systemd-boot'), -1)
+
+    def test_systemd_timeout_falls_back_to_loader_conf(self):
+        with tempfile.TemporaryDirectory() as d:
+            esp = Path(d)
+            (esp / 'loader').mkdir()
+            (esp / 'loader/loader.conf').write_text('timeout 25\n')
+            variable = Mock()
+            variable.read_bytes.side_effect = FileNotFoundError()
+            with patch.object(b, 'Path', side_effect=[variable, esp]), patch.object(b, 'program', return_value='bootctl'), patch.object(b, 'run', return_value=d):
+                self.assertEqual(b.configured_timeout('systemd-boot'), 25)
+
+    def test_inspect_is_read_only_json(self):
+        output = io.StringIO()
+        with patch.object(b, 'detect', return_value='grub'), patch.object(b, 'configured_timeout', return_value=25), patch.object(b, 'entries', return_value=[{'id': 'linux', 'title': 'Linux'}]), patch.object(b, 'apply_grub') as apply, contextlib.redirect_stdout(output):
+            b.main(['--inspect'])
+        data = json.loads(output.getvalue())
+        self.assertEqual(data['timeout'], 25)
+        apply.assert_not_called()
+        with self.assertRaises(b.Error):
+            b.main(['--inspect', '--apply'])
+
     def test_hidden_menu_preview_is_read_only(self):
         output = io.StringIO()
         with patch.object(b, 'detect', return_value='grub'), patch.object(b, 'hidden_menu_environment', return_value=('tool', Path('/fixture/grubenv'))), patch.object(b, 'apply_grub') as apply, contextlib.redirect_stdout(output):

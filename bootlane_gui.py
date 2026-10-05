@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Bootlane desktop interface. Requires the distribution's Python Tk package."""
+import json
 from pathlib import Path
 import queue
 import shutil
@@ -117,9 +118,9 @@ class Bootlane:
         self.entries.bind('<<TreeviewSelect>>', self.invalidate)
         row = tk.Frame(self.menu, bg=CARD)
         row.pack(fill='x', padx=24, pady=18)
-        self.change_timeout = tk.BooleanVar(value=True)
+        self.change_timeout = tk.BooleanVar(value=False)
         tk.Checkbutton(row, text='Set menu waiting time', variable=self.change_timeout, bg=CARD, fg=INK, selectcolor=BG, activebackground=CARD, activeforeground=INK).pack(side='left')
-        self.timeout = tk.StringVar(value='5')
+        self.timeout = tk.StringVar(value='')
         tk.Spinbox(row, from_=-1, to=86400, textvariable=self.timeout, width=7, bg=BG, fg=ACCENT, buttonbackground=CARD, insertbackground=INK, relief='flat', font=('Sans', 18)).pack(side='left', padx=14)
         self.label(row, 'seconds   ·   0 = immediate   ·   −1 = wait for me', 10, MUTED).pack(side='left')
         self.label(self.menu, 'GRUB files are backed up before saving. Administrator authentication happens when needed.', 10, MUTED).pack(anchor='w', padx=24, pady=(0, 18))
@@ -200,17 +201,25 @@ class Bootlane:
         if self.busy:
             return
         self.invalidate()
+        self.timeout.set('')
+        self.change_timeout.set(False)
         def loaded(out):
+            data = json.loads(out)
             self.read_elevated = elevated or self.read_elevated
             self.entries.delete(*self.entries.get_children())
             self.ids.clear()
-            for line in out.splitlines():
-                if '\t' in line:
-                    ident, title = line.split('\t', 1)
-                    item = self.entries.insert('', 'end', values=(title, ident))
-                    self.ids[item] = ident
-            self.status.set(next((l for l in out.splitlines() if l.startswith('Bootloader:')), 'Entries loaded') + ' · Select a default entry, or just adjust the timeout.')
-        self.task(['--loader', self.loader.get(), '--list'], loaded, elevated)
+            for entry in data['entries']:
+                item = self.entries.insert('', 'end', values=(entry['title'], entry['id']))
+                self.ids[item] = entry['id']
+            seconds = data.get('timeout')
+            if seconds is not None:
+                self.timeout.set(str(seconds))
+                self.change_timeout.set(True)
+                waiting = 'wait indefinitely' if seconds == -1 else f'{seconds} seconds'
+                self.status.set(f"Bootloader: {data['loader']} · Configured waiting time: {waiting}.")
+            else:
+                self.status.set(f"Bootloader: {data['loader']} · Current waiting time could not be read. Enable Set menu waiting time and enter a value to change it.")
+        self.task(['--loader', self.loader.get(), '--inspect'], loaded, elevated)
 
     def load_firmware(self, elevated=False):
         if self.busy:

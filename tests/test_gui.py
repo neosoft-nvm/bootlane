@@ -1,4 +1,5 @@
 import queue
+import json
 import importlib.util
 from pathlib import Path
 import sys
@@ -27,6 +28,7 @@ class GuiTests(unittest.TestCase):
         app.timeout = Mock()
         app.timeout.get.return_value = '5'
         app.entries = Mock()
+        app.entries.get_children.return_value = ()
         app.entries.selection.return_value = ('chosen',)
         app.ids = {'chosen': 'advanced>linux'}
         app.busy = False
@@ -36,6 +38,25 @@ class GuiTests(unittest.TestCase):
         app.apply_button = Mock()
         app.status = Mock()
         return app
+
+    def test_launch_reads_saved_timeout(self):
+        app = self.app()
+        app.task = Mock()
+        app.load_menu()
+        args, callback, elevated = app.task.call_args.args
+        self.assertIn('--inspect', args)
+        callback(json.dumps({'loader': 'grub', 'timeout': 25, 'entries': []}))
+        app.timeout.set.assert_called_with('25')
+        app.change_timeout.set.assert_called_with(True)
+
+    def test_unknown_timeout_does_not_display_five(self):
+        app = self.app()
+        app.task = Mock()
+        app.load_menu()
+        callback = app.task.call_args.args[1]
+        callback(json.dumps({'loader': 'grub', 'timeout': None, 'entries': []}))
+        app.timeout.set.assert_called_once_with('')
+        app.change_timeout.set.assert_called_with(False)
 
     def test_apply_opens_preview_without_saving(self):
         app = self.app()

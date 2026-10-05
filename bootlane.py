@@ -140,6 +140,65 @@ def entries(loader):
     # IDs with unresolved GRUB expressions are deliberately omitted.
     return list({e['id']: e for e in result}.values())
 
+def timeout_seconds(value):
+    if value in ('menu-force', '4294967295'):
+        return -1
+    if value == 'menu-hidden':
+        return 0
+    if value is not None and re.fullmatch(r'-?\d+', value):
+        seconds = int(value)
+        if -1 <= seconds <= 86400:
+            return seconds
+    return None
+
+def grub_timeout_from_text(text, previous=None):
+    """Read literal assignments without sourcing or executing shell configuration."""
+    value = previous
+    for line in text.splitlines():
+        match = re.match(r'^\s*(?:export\s+)?GRUB_TIMEOUT\s*=(.*)$', line)
+        if match:
+            try:
+                tokens = shlex.split(match[1], comments=True)
+            except ValueError:
+                tokens = []
+            value = timeout_seconds(tokens[0]) if len(tokens) == 1 else None
+    return value
+
+def configured_timeout(loader):
+    if loader == 'grub':
+        value = grub_timeout_from_text(Path('/etc/default/grub').read_text())
+        fragments = Path('/etc/default/grub.d')
+        try:
+            files = sorted(p for p in fragments.iterdir() if p.suffix == '.cfg')
+        except FileNotFoundError:
+            files = []
+        for path in files:
+            value = grub_timeout_from_text(path.read_text(), value)
+        return value
+    # Persistent EFI preferences override systemd-boot's loader.conf settings.
+    variable = Path('/sys/firmware/efi/efivars/LoaderConfigTimeout-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f')
+    try:
+        data = variable.read_bytes()
+    except FileNotFoundError:
+        data = None
+    if data is not None:
+        try:
+            value = data[4:].decode('utf-16-le').rstrip('\x00')
+        except UnicodeDecodeError:
+            return None
+        return timeout_seconds(value)
+    esp = Path(run(program('bootctl'), '--print-esp-path').strip())
+    try:
+        text = (esp / 'loader/loader.conf').read_text()
+    except FileNotFoundError:
+        return 0
+    value = 0
+    for line in text.splitlines():
+        tokens = line.split()
+        if tokens and tokens[0] == 'timeout':
+            value = timeout_seconds(tokens[1]) if len(tokens) >= 2 else None
+    return value
+
 def firmware():
     text = run(program('efibootmgr'))
     m = re.search(r'^BootOrder:\s*([0-9A-Fa-f,]+)', text, re.M)
@@ -214,12 +273,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--loader', choices=['auto', 'grub', 'systemd-boot'], default='auto')
     parser.add_argument('--list', action='store_true', help='show boot menu entry IDs')
+    parser.add_argument('--inspect', action='store_true', help='read menu entries and configured timeout as JSON')
     parser.add_argument('--timeout', type=int, help='seconds, 0 for immediate boot, -1 to wait indefinitely')
     parser.add_argument('--default', help='exact menu entry ID from --list')
     parser.add_argument('--firmware-list', action='store_true')
     parser.add_argument('--boot-order', help='UEFI IDs in priority order; omitted current IDs are appended')
     parser.add_argument('--apply', action='store_true', help='perform previewed changes (requires root)')
     args = parser.parse_args(argv)
+    if args.inspect and (args.apply or args.timeout is not None or args.default or args.boot_order or args.firmware_list):
+        raise Error('--inspect is read-only and cannot be combined with changes or firmware commands.')
     if args.timeout is not None and not -1 <= args.timeout <= 86400:
         raise Error('Timeout must be -1 or between 0 and 86400 seconds.')
     if args.boot_order and (args.timeout is not None or args.default):
@@ -239,6 +301,9 @@ def main(argv=None):
                     raise Error('Firmware did not retain the requested order.')
         return
     loader = detect() if args.loader == 'auto' else args.loader
+    if args.inspect:
+        print(json.dumps({'loader': loader, 'timeout': configured_timeout(loader), 'entries': entries(loader)}))
+        return
     print('Bootloader: ' + loader)
     listed = entries(loader) if args.list or args.default else []
     if args.list:
