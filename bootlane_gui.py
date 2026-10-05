@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Bootlane desktop interface. Requires the distribution's Python Tk package."""
-import json
 from pathlib import Path
 import queue
-import shlex
 import shutil
 import subprocess
 import sys
@@ -38,6 +36,7 @@ class Bootlane:
         self.firmware_ids = {}
         self.order = []
         self.last_preview = None
+        self.confirmation_open = False
         root.title('Bootlane • Your next start')
         root.geometry('1000x790')
         root.minsize(850, 700)
@@ -78,15 +77,13 @@ class Bootlane:
         self.menu.pack(fill='both', expand=True)
         footer = tk.Frame(root, bg=BG)
         footer.pack(fill='x', padx=32, pady=(0, 12))
-        self.status = tk.StringVar(value='Ready. Preview first, then apply when it looks right.')
+        self.status = tk.StringVar(value='Ready. Apply changes opens a preview for your confirmation.')
         tk.Label(footer, textvariable=self.status, bg=BG, fg=MUTED, anchor='w', wraplength=900).pack(fill='x')
         actions = tk.Frame(root, bg=BG)
         actions.pack(fill='x', padx=32, pady=(0, 25))
         self.label(actions, 'Changes take effect on your next boot.', 10, MUTED, BG).pack(side='left')
         self.apply_button = self.button(actions, 'Apply changes  →', self.apply, primary=True)
         self.apply_button.pack(side='right')
-        self.apply_button.configure(state='disabled')
-        self.button(actions, 'Preview changes', self.preview).pack(side='right', padx=10)
         self.loader.trace_add('write', self.invalidate)
         self.timeout.trace_add('write', self.invalidate)
         self.change_timeout.trace_add('write', self.invalidate)
@@ -148,9 +145,12 @@ class Bootlane:
         (self.menu if self.mode.get() == 'menu' else self.firmware).pack(fill='both', expand=True)
         self.invalidate()
 
+    def update_apply_button(self):
+        self.apply_button.configure(state='disabled' if self.busy or self.confirmation_open else 'normal')
+
     def invalidate(self, *unused):
         self.last_preview = None
-        self.apply_button.configure(state='disabled')
+        self.update_apply_button()
 
     def task(self, args, callback, elevated=False):
         if self.busy:
@@ -191,6 +191,7 @@ class Bootlane:
                 if elevated and '--apply' not in args:
                     self.read_elevated = True
                 callback(out)
+            self.update_apply_button()
         except queue.Empty:
             pass
         self.root.after(100, self.poll)
@@ -278,24 +279,33 @@ class Bootlane:
             except (ValueError, KeyError):
                 current = None
             if current != changes:
-                self.status.set('Selection changed. Preview again.')
+                self.status.set('Selection changed. Click Apply changes again to review it.')
                 return
             self.last_preview = changes
-            self.apply_button.configure(state='normal')
-            self.status.set('Preview ready. Nothing has been saved.')
-            self.details('Your next start • preview', '\n\n'.join(outputs))
+            self.status.set('Review the preview and confirm to save. Nothing has been saved yet.')
+            self.details('Review your changes', '\n\n'.join(outputs), confirm=True)
             return
         self.task(changes[index], lambda out: self.preview_next(changes, index + 1, outputs + [out]), elevated=self.read_elevated)
 
     def apply(self):
+        if not self.confirmation_open:
+            self.preview()
+
+    def cancel_confirmation(self):
+        self.invalidate()
+        self.status.set('Cancelled. No changes were saved.')
+
+    def confirm_apply(self):
         if self.busy or not self.last_preview:
             return
         try:
             if self.arguments() != self.last_preview:
                 self.invalidate()
+                self.status.set('Selection changed. Click Apply changes again to review it.')
                 return
         except (ValueError, KeyError):
             self.invalidate()
+            self.status.set('Selection changed. Click Apply changes again to review it.')
             return
         changes = self.last_preview
         self.last_preview = None
@@ -310,17 +320,44 @@ class Bootlane:
         self.status.set(f'Applying setting {index+1} of {len(changes)}…')
         self.task(changes[index] + ['--apply'], lambda out: self.apply_next(changes, index + 1, outputs + [out]), elevated=True)
 
-    def details(self, title, text):
+    def details(self, title, text, confirm=False):
         dialog = tk.Toplevel(self.root)
         dialog.title(title)
-        dialog.geometry('760x420')
+        dialog.geometry('760x480' if confirm else '760x420')
+        dialog.minsize(600, 360)
+        dialog.transient(self.root)
         dialog.configure(bg=CARD)
         self.label(dialog, title, 18, bold=True).pack(anchor='w', padx=20, pady=15)
+        if confirm:
+            self.label(dialog, 'Nothing has been saved yet. Confirm to apply the changes below.', 11, MUTED).pack(anchor='w', padx=20, pady=(0, 12))
         box = tk.Text(dialog, bg=BG, fg=INK, wrap='word', relief='flat', padx=15, pady=15, font=('Monospace', 10))
         box.pack(fill='both', expand=True, padx=20)
         box.insert('1.0', text)
         box.configure(state='disabled')
-        self.button(dialog, 'Done', dialog.destroy, primary=True).pack(anchor='e', padx=20, pady=15)
+        if confirm:
+            self.confirmation_open = True
+            self.update_apply_button()
+            def close(accepted=False):
+                dialog.grab_release()
+                dialog.destroy()
+                self.confirmation_open = False
+                if accepted:
+                    self.confirm_apply()
+                else:
+                    self.cancel_confirmation()
+                self.update_apply_button()
+            actions = tk.Frame(dialog, bg=CARD)
+            actions.pack(fill='x', padx=20, pady=15)
+            self.button(actions, 'Confirm and apply  →', lambda: close(True), primary=True).pack(side='right')
+            cancel = self.button(actions, 'Cancel', close)
+            cancel.pack(side='right', padx=10)
+            dialog.protocol('WM_DELETE_WINDOW', close)
+            dialog.bind('<Escape>', lambda event: close())
+            dialog.grab_set()
+            cancel.focus_set()
+        else:
+            self.button(dialog, 'Done', dialog.destroy, primary=True).pack(anchor='e', padx=20, pady=15)
+
 
 
 if __name__ == '__main__':

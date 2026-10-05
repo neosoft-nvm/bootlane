@@ -6,7 +6,7 @@ A small, portable Linux desktop and command-line utility for GRUB, systemd-boot,
 
 ## Desktop app
 
-Bootlane has a dark desktop interface with mint accents, boot-entry selection, a waiting-time control, firmware priority buttons, and a preview before applying. It uses Tk, the standard Python desktop toolkit; it does not require a browser or background server.
+Bootlane has a dark desktop interface with mint accents, boot-entry selection, a waiting-time control, firmware priority buttons, and a confirmation preview opened by Apply changes. It uses Tk, the standard Python desktop toolkit; it does not require a browser or background server.
 
 Install the desktop dependencies using your distribution's package manager:
 
@@ -33,7 +33,7 @@ python3 install.py
 
 The installer copies the app to your user data folder and creates a desktop launcher. To update it after downloading a new version, run the installer again.
 
-Select a boot menu entry, set the waiting time, and click **Preview changes**, then **Apply changes**. Leave all entries unselected to change only the timeout; turn off the waiting-time checkbox to change only the default entry. On systems with protected boot files (including Fedora), Bootlane offers to read them through the administrator password dialog. This read does not change settings. You can also use **Read as administrator** directly. Protected previews may ask for authentication again. The firmware view lets you move existing boot priorities up and down.
+Select a boot menu entry, set the waiting time, and click **Apply changes**. A preview opens with **Confirm and apply** and **Cancel** buttons. Changes are saved only after you confirm. Closing the preview or pressing Escape cancels without saving. Leave all entries unselected to change only the timeout; turn off the waiting-time checkbox to change only the default entry. On systems with protected boot files (including Fedora), Bootlane offers to read them through the administrator password dialog. This read does not change settings. You can also use **Read as administrator** directly. Protected previews may ask for authentication again. The firmware view lets you move existing boot priorities up and down.
 
 Bootlane stays open as your normal user; administrator commands use the system password dialog. If you change both timeout and default, they are saved sequentially. If a later setting fails, an earlier successful setting remains saved. The CLI can be used to restore it. No automatic reboot occurs.
 

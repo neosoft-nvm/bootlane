@@ -29,7 +29,95 @@ class GuiTests(unittest.TestCase):
         app.entries = Mock()
         app.entries.selection.return_value = ('chosen',)
         app.ids = {'chosen': 'advanced>linux'}
+        app.busy = False
+        app.confirmation_open = False
+        app.read_elevated = False
+        app.last_preview = None
+        app.apply_button = Mock()
+        app.status = Mock()
         return app
+
+    def test_apply_opens_preview_without_saving(self):
+        app = self.app()
+        app.preview = Mock()
+        app.apply_next = Mock()
+        app.apply()
+        app.preview.assert_called_once_with()
+        app.apply_next.assert_not_called()
+
+    def test_preview_commands_do_not_apply(self):
+        app = self.app()
+        app.task = Mock()
+        app.apply_next = Mock()
+        app.apply()
+        args, callback = app.task.call_args.args
+        self.assertNotIn('--apply', args)
+        app.apply_next.assert_not_called()
+
+    def test_completed_preview_requests_confirmation(self):
+        app = self.app()
+        app.details = Mock()
+        app.apply_next = Mock()
+        changes = app.arguments()
+        app.preview_next(changes, len(changes), ['Preview output'])
+        app.details.assert_called_once_with('Review your changes', 'Preview output', confirm=True)
+        self.assertEqual(app.last_preview, changes)
+        app.apply_next.assert_not_called()
+
+    def test_confirm_saves_only_the_reviewed_settings(self):
+        app = self.app()
+        changes = app.arguments()
+        app.last_preview = changes
+        app.apply_next = Mock()
+        app.confirm_apply()
+        app.apply_next.assert_called_once_with(changes, 0, [])
+        self.assertIsNone(app.last_preview)
+        # Repeated confirmation cannot save the same preview twice.
+        app.confirm_apply()
+        app.apply_next.assert_called_once()
+
+    def test_cancel_discards_preview_without_saving(self):
+        app = self.app()
+        app.last_preview = app.arguments()
+        app.apply_next = Mock()
+        app.cancel_confirmation()
+        self.assertIsNone(app.last_preview)
+        app.confirm_apply()
+        app.apply_next.assert_not_called()
+        app.apply_button.configure.assert_called_with(state='normal')
+
+    def test_dialog_confirmation_and_close_callbacks(self):
+        for action in ('Confirm and apply  →', 'Cancel', 'window-close', 'escape'):
+            with self.subTest(action=action):
+                app = self.app()
+                app.root = Mock()
+                app.label = Mock()
+                app.confirm_apply = Mock()
+                app.cancel_confirmation = Mock()
+                dialog = Mock()
+                callbacks = {}
+                def button(parent, text, command, primary=False):
+                    callbacks[text] = command
+                    return Mock()
+                app.button = button
+                with patch.object(gui.tk, 'Toplevel', return_value=dialog, create=True), patch.object(gui.tk, 'Text', create=True), patch.object(gui.tk, 'Frame', create=True):
+                    app.details('Review', 'Settings', confirm=True)
+                self.assertTrue(app.confirmation_open)
+                dialog.grab_set.assert_called_once()
+                if action == 'window-close':
+                    dialog.protocol.call_args.args[1]()
+                elif action == 'escape':
+                    dialog.bind.call_args.args[1](Mock())
+                else:
+                    callbacks[action]()
+                self.assertFalse(app.confirmation_open)
+                dialog.destroy.assert_called_once()
+                if action == 'Confirm and apply  →':
+                    app.confirm_apply.assert_called_once()
+                    app.cancel_confirmation.assert_not_called()
+                else:
+                    app.cancel_confirmation.assert_called_once()
+                    app.confirm_apply.assert_not_called()
 
     def test_permission_failure_offers_elevated_read(self):
         app = self.app()
@@ -97,7 +185,7 @@ class GuiTests(unittest.TestCase):
         app.last_preview = [['--loader', 'auto', '--timeout', '10']]
         app.apply_button = Mock()
         app.apply_next = Mock()
-        app.apply()
+        app.confirm_apply()
         self.assertIsNone(app.last_preview)
         app.apply_next.assert_not_called()
 
