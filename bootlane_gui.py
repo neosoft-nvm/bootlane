@@ -186,7 +186,7 @@ class Bootlane:
             elif code:
                 self.invalidate()
                 self.status.set('Operation stopped. Earlier successful settings, if any, remain saved. Review the details.')
-                messagebox.showerror('Bootlane needs your attention', err.strip() or out.strip() or 'Authentication cancelled or command failed.')
+                messagebox.showerror('Bootlane needs your attention', '\n\n'.join(part.strip() for part in (err, out) if part.strip()) or 'Authentication cancelled or command failed.')
             else:
                 if elevated and '--apply' not in args:
                     self.read_elevated = True

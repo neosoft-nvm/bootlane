@@ -37,7 +37,7 @@ Select a boot menu entry, set the waiting time, and click **Preview changes**, t
 
 Bootlane stays open as your normal user; administrator commands use the system password dialog. If you change both timeout and default, they are saved sequentially. If a later setting fails, an earlier successful setting remains saved. The CLI can be used to restore it. No automatic reboot occurs.
 
-The GUI source has been checked, but this development environment lacks Tk and a graphical display, so live rendering and interaction still need verification on a desktop Linux machine.
+The GUI source has been checked, but this development environment has no graphical display, so live rendering and interaction still need verification on a desktop Linux machine.
 
 ## Command-line quick start
 
@@ -86,9 +86,9 @@ GRUB distinguishes protected files from missing files and accepts symlink aliase
 
 ## Backups and recovery
 
-Before GRUB changes, Bootlane saves timestamped copies beside `/etc/default/grub` and the generated `grub.cfg`. It regenerates to a temporary file, checks GRUB syntax, then replaces the menu while preserving extended attributes, including SELinux labels. Generation or validation failures restore both files. Keep the reported backups until you have booted successfully. For manual recovery, copy each reported backup over its original path using sudo. If the machine cannot boot, perform this from a recovery environment with the target filesystems mounted.
+Before GRUB changes, Bootlane saves timestamped copies beside `/etc/default/grub` and the generated `grub.cfg`. It regenerates to a temporary file, checks GRUB syntax, then replaces the menu while preserving extended attributes, including SELinux labels. Generation, validation, or automatic-hiding update failures restore the backed-up files. When setting a timeout on Fedora with automatic menu hiding enabled, the preview explains that hiding will be disabled. Apply backs up the GRUB environment file as well, then disables hiding so the selected timeout takes effect. Keep the reported backups until you have booted successfully. For manual recovery, copy each reported backup over its original path using sudo. If the machine cannot boot, perform this from a recovery environment with the target filesystems mounted.
 
-GRUB configuration generation executes your distribution's installed scripts. Custom scripts can have side effects outside the two backed-up files. Later grub.d settings that explicitly override requested values cause Bootlane to stop. Fedora automatic menu hiding also causes it to stop with the command needed to disable that setting; that separate change is not backed up by Bootlane.
+GRUB configuration generation executes your distribution's installed scripts. Custom scripts can have side effects outside the two backed-up files. Later grub.d settings that explicitly override requested values cause Bootlane to stop. Fedora automatic menu hiding is handled as part of the timeout change and included in backups. The environment is read from grubenv beside the detected GRUB configuration, following any symlink to the actual file.
 
 systemd-boot uses EFI variables rather than file backups. Inspect current settings with `bootctl status` before changing them. Restore previous values with `bootctl set-default PREVIOUS_ID` or `bootctl set-timeout PREVIOUS_TIMEOUT`; pass an empty string to clear an override and use loader.conf again. No reboot is performed automatically.
 
@@ -98,7 +98,7 @@ systemd-boot uses EFI variables rather than file backups. Inspect current settin
 python3 -m unittest discover -s tests -v
 ```
 
-Tests cover nested GRUB IDs, literal configuration values, priority validation, preview-only behavior, file permissions, and rollback on generation failure. Real boot and firmware changes have not been tested on hardware.
+Tests cover nested GRUB IDs, literal configuration values, priority validation, preview-only behavior, protected boot files, GUI authentication retries, file permissions, extended attributes, and rollback. Integration tests use installed GRUB tools against temporary environment files to verify automatic-hiding removal, preservation of other variables, and byte-for-byte rollback after a failure. Real boot and firmware changes have not been tested on hardware.
 
 ## References
 

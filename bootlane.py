@@ -35,11 +35,11 @@ def program(*names):
     raise Error('Missing distribution package providing ' + ' / '.join(names))
 
 def atomic(path, text):
-    path = Path(path)
+    path = Path(path).resolve(strict=True)
     stat = path.stat()
     fd, tmp = tempfile.mkstemp(prefix='.bootlane-', dir=path.parent)
     try:
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, 'wb' if isinstance(text, bytes) else 'w') as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
@@ -156,8 +156,24 @@ def order_value(value, current, available):
         raise Error('Duplicate boot order IDs.')
     return requested + [x for x in current if x not in requested]
 
+def hidden_menu_environment():
+    """Read the environment used by the detected GRUB installation; never mutate it."""
+    tool = shutil.which('grub2-editenv') or shutil.which('grub-editenv')
+    if not tool:
+        return None
+    env = grub_config().parent / 'grubenv'
+    try:
+        env = env.resolve(strict=True)
+    except FileNotFoundError:
+        return None
+    variables = run(tool, str(env), 'list')
+    if re.search(r'^menu_auto_hide=1$', variables, re.M):
+        return tool, env
+    return None
+
 def apply_grub(values):
     source, cfg = Path('/etc/default/grub'), grub_config()
+    hidden_env = hidden_menu_environment() if 'GRUB_TIMEOUT' in values else None
     # Later sourced distribution fragments may override our settings.
     for p in Path('/etc/default/grub.d').glob('*.cfg'):
         if any(re.search(r'^\s*(?:export\s+)?' + key + r'\s*=', p.read_text(), re.M) for key in values):
@@ -166,24 +182,33 @@ def apply_grub(values):
     checker = program('grub-script-check', 'grub2-script-check')
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
     backups = []
-    for path in (source, cfg):
+    paths = [source, cfg]
+    if hidden_env:
+        paths.append(hidden_env[1])
+    for path in paths:
         backup = path.with_name(path.name + '.bootlane-' + stamp)
         shutil.copy2(path, backup)
         backups.append((path, backup))
+    print('Backups: ' + ', '.join(str(b) for _, b in backups))
     fd, tmp = tempfile.mkstemp(prefix='.bootlane-generated-', dir=cfg.parent)
     os.close(fd)
     try:
         atomic(source, update_grub(source.read_text(), values))
         run(mkconfig, '-o', tmp)
         run(checker, tmp)
-        atomic(cfg, Path(tmp).read_text())
+        atomic(cfg, Path(tmp).read_bytes())
+        if hidden_env:
+            tool, env = hidden_env
+            run(tool, str(env), 'unset', 'menu_auto_hide')
+            if re.search(r'^menu_auto_hide=1$', run(tool, str(env), 'list'), re.M):
+                raise Error('GRUB did not retain the visible-menu setting.')
+            print('Automatic menu hiding disabled; the chosen timeout now controls the menu.')
     except Exception:
         for path, backup in backups:
-            atomic(path, backup.read_text())
+            atomic(path, backup.read_bytes())
         raise
     finally:
         Path(tmp).unlink(missing_ok=True)
-    print('Backups: ' + ', '.join(str(b) for _, b in backups))
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -238,10 +263,9 @@ def main(argv=None):
         values = {}
         if args.timeout is not None:
             values.update(GRUB_TIMEOUT=args.timeout, GRUB_TIMEOUT_STYLE='menu')
-            # Fedora's automatic hidden menu overrides the visible menu preference.
-            envtool = shutil.which('grub2-editenv') or shutil.which('grub-editenv')
-            if envtool and re.search(r'^menu_auto_hide=1$', run(envtool, '-', 'list'), re.M):
-                raise Error('GRUB automatic hiding is enabled. Run sudo grub2-editenv - unset menu_auto_hide (or grub-editenv), then retry.')
+            if hidden_menu_environment():
+                print('Preview: disable automatic menu hiding so the chosen timeout takes effect. '
+                      'The GRUB environment will be backed up before applying.')
         if args.default:
             values.update(GRUB_DEFAULT=args.default, GRUB_SAVEDEFAULT='false')
         print('Preview /etc/default/grub: ' + json.dumps(values))
