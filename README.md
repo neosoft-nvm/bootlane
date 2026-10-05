@@ -2,9 +2,44 @@
 
 **Choose what boots. Choose how long it waits.**
 
-A small, portable Linux command-line utility for GRUB, systemd-boot, and UEFI boot priorities. One Python file; no Python packages to install. Requires Python 3.8 or newer and the distribution's existing bootloader tools.
+A small, portable Linux desktop and command-line utility for GRUB, systemd-boot, and UEFI boot priorities. One Python file; no Python packages to install. Requires Python 3.8 or newer and the distribution's existing bootloader tools.
 
-## Quick start
+## Desktop app
+
+Bootlane has a dark desktop interface with mint accents, boot-entry selection, a waiting-time control, firmware priority buttons, and a preview before applying. It uses Tk, the standard Python desktop toolkit; it does not require a browser or background server.
+
+Install the desktop dependencies using your distribution's package manager:
+
+| Distribution | Command |
+| --- | --- |
+| Ubuntu / Debian / Mint / Pop!_OS | `sudo apt install python3-tk pkexec` |
+| Fedora / Rocky / AlmaLinux | `sudo dnf install python3-tkinter polkit` |
+| openSUSE | `sudo zypper install python3-tkinter polkit` |
+| Arch / Manjaro / EndeavourOS | `sudo pacman -S python tk polkit` |
+
+Package availability can vary by distribution version; `pkexec` may be packaged separately. Your desktop must have a running PolicyKit authentication agent. The existing GRUB/bootctl tools described below are also required; firmware priorities need `efibootmgr`.
+
+From the downloaded or cloned folder:
+
+```sh
+python3 bootlane_gui.py
+```
+
+To add Bootlane to your app menu, run this **without sudo**:
+
+```sh
+python3 install.py
+```
+
+The installer copies the app to your user data folder and creates a desktop launcher. To update it after downloading a new version, run the installer again.
+
+Select a boot menu entry, set the waiting time, and click **Preview changes**, then **Apply changes**. Leave all entries unselected to change only the timeout; turn off the waiting-time checkbox to change only the default entry. Use **Read as administrator** if listing boot entries requires permission. The firmware view lets you move existing boot priorities up and down.
+
+Bootlane stays open as your normal user; administrator commands use the system password dialog. If you change both timeout and default, they are saved sequentially. If a later setting fails, an earlier successful setting remains saved. The CLI can be used to restore it. No automatic reboot occurs.
+
+The GUI source has been checked, but this development environment lacks Tk and a graphical display, so live rendering and interaction still need verification on a desktop Linux machine.
+
+## Command-line quick start
 
 ```sh
 python3 bootlane.py --list
