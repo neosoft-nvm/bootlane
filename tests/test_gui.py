@@ -1,3 +1,4 @@
+import queue
 import importlib.util
 from pathlib import Path
 import sys
@@ -29,6 +30,43 @@ class GuiTests(unittest.TestCase):
         app.entries.selection.return_value = ('chosen',)
         app.ids = {'chosen': 'advanced>linux'}
         return app
+
+    def test_permission_failure_offers_elevated_read(self):
+        app = self.app()
+        app.events = queue.Queue()
+        callback = Mock()
+        app.events.put((callback, 3, '', 'Protected config', ['--list'], False))
+        app.busy = True
+        app.apply_button = Mock()
+        app.status = Mock()
+        app.root = Mock()
+        app.task = Mock()
+        with patch.object(gui.messagebox, 'askyesno', return_value=True):
+            app.poll()
+        app.task.assert_called_once_with(['--list'], callback, elevated=True)
+        callback.assert_not_called()
+
+    def test_permission_prompt_can_be_declined(self):
+        app = self.app()
+        app.events = queue.Queue()
+        app.events.put((Mock(), 3, '', 'Protected config', ['--list'], False))
+        app.apply_button = Mock()
+        app.status = Mock()
+        app.root = Mock()
+        app.task = Mock()
+        with patch.object(gui.messagebox, 'askyesno', return_value=False):
+            app.poll()
+        app.task.assert_not_called()
+
+    def test_elevated_read_enables_elevated_preview(self):
+        app = self.app()
+        app.events = queue.Queue()
+        callback = Mock()
+        app.events.put((callback, 0, 'entries', '', ['--list'], True))
+        app.root = Mock()
+        app.poll()
+        self.assertTrue(app.read_elevated)
+        callback.assert_called_once_with('entries')
 
     def test_settings_are_separate_and_keep_literal_entry_id(self):
         self.assertEqual(self.app().arguments(), [['--loader', 'auto', '--timeout', '5'], ['--loader', 'auto', '--default', 'advanced>linux']])

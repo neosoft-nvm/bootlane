@@ -2,13 +2,54 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('bootlane', Path(__file__).parents[1] / 'bootlane.py')
 b = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(b)
 
 class Tests(unittest.TestCase):
+    def test_protected_grub_path_reports_permissions(self):
+        missing, protected = Mock(), Mock()
+        missing.stat.side_effect = FileNotFoundError()
+        protected.stat.side_effect = PermissionError('restricted directory')
+        with patch.object(b, 'Path', side_effect=[missing, protected]):
+            with self.assertRaises(b.PermissionRequired):
+                b.grub_config()
+
+    def test_missing_configuration_has_specific_error(self):
+        missing = Mock()
+        missing.stat.side_effect = FileNotFoundError()
+        with patch.object(b, 'Path', return_value=missing):
+            with self.assertRaisesRegex(b.Error, 'No GRUB configuration found'):
+                b.grub_config()
+
+    def test_symlink_alias_is_not_ambiguous(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = Path(d) / 'grub.cfg'
+            config.write_text('menu')
+            alias = Path(d) / 'alias.cfg'
+            alias.symlink_to(config)
+            with patch.object(b, 'Path', side_effect=[config, alias]):
+                self.assertEqual(b.grub_config(), config)
+
+    def test_distinct_configs_remain_ambiguous(self):
+        with tempfile.TemporaryDirectory() as d:
+            configs = [Path(d) / name for name in ('one', 'two')]
+            for path in configs:
+                path.write_text('menu')
+            with patch.object(b, 'Path', side_effect=configs):
+                with self.assertRaisesRegex(b.Error, 'Two different'):
+                    b.grub_config()
+
+    def test_atomic_preserves_extended_attributes(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'config'
+            path.write_text('old')
+            b.os.setxattr(path, 'user.bootlane-test', b'metadata')
+            b.atomic(path, 'new')
+            self.assertEqual(b.os.getxattr(path, 'user.bootlane-test'), b'metadata')
+
     def test_nested_ids(self):
         text = """menuentry 'Linux' --id 'linux' {
 }

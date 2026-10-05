@@ -33,6 +33,7 @@ class Bootlane:
         self.root = root
         self.events = queue.Queue()
         self.busy = False
+        self.read_elevated = False
         self.ids = {}
         self.firmware_ids = {}
         self.order = []
@@ -165,20 +166,30 @@ class Bootlane:
         def worker():
             try:
                 proc = subprocess.run(command, text=True, capture_output=True)
-                self.events.put((callback, proc.returncode, proc.stdout, proc.stderr))
+                self.events.put((callback, proc.returncode, proc.stdout, proc.stderr, args, elevated))
             except Exception as exc:
-                self.events.put((callback, 1, '', str(exc)))
+                self.events.put((callback, 1, '', str(exc), args, elevated))
         threading.Thread(target=worker, daemon=True).start()
 
     def poll(self):
         try:
-            callback, code, out, err = self.events.get_nowait()
+            callback, code, out, err, args, elevated = self.events.get_nowait()
             self.busy = False
-            if code:
+            if code == 3 and not elevated:
+                self.invalidate()
+                self.status.set('Administrator access is needed to read protected boot settings.')
+                if messagebox.askyesno('Read protected boot settings?',
+                        'Your system restricts access to the boot configuration. '
+                        'Read it using the administrator password dialog? '
+                        'This does not change your boot settings.'):
+                    self.task(args, callback, elevated=True)
+            elif code:
                 self.invalidate()
                 self.status.set('Operation stopped. Earlier successful settings, if any, remain saved. Review the details.')
                 messagebox.showerror('Bootlane needs your attention', err.strip() or out.strip() or 'Authentication cancelled or command failed.')
             else:
+                if elevated and '--apply' not in args:
+                    self.read_elevated = True
                 callback(out)
         except queue.Empty:
             pass
@@ -189,6 +200,7 @@ class Bootlane:
             return
         self.invalidate()
         def loaded(out):
+            self.read_elevated = elevated or self.read_elevated
             self.entries.delete(*self.entries.get_children())
             self.ids.clear()
             for line in out.splitlines():
@@ -273,7 +285,7 @@ class Bootlane:
             self.status.set('Preview ready. Nothing has been saved.')
             self.details('Your next start • preview', '\n\n'.join(outputs))
             return
-        self.task(changes[index], lambda out: self.preview_next(changes, index + 1, outputs + [out]))
+        self.task(changes[index], lambda out: self.preview_next(changes, index + 1, outputs + [out]), elevated=self.read_elevated)
 
     def apply(self):
         if self.busy or not self.last_preview:

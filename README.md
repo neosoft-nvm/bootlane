@@ -33,7 +33,7 @@ python3 install.py
 
 The installer copies the app to your user data folder and creates a desktop launcher. To update it after downloading a new version, run the installer again.
 
-Select a boot menu entry, set the waiting time, and click **Preview changes**, then **Apply changes**. Leave all entries unselected to change only the timeout; turn off the waiting-time checkbox to change only the default entry. Use **Read as administrator** if listing boot entries requires permission. The firmware view lets you move existing boot priorities up and down.
+Select a boot menu entry, set the waiting time, and click **Preview changes**, then **Apply changes**. Leave all entries unselected to change only the timeout; turn off the waiting-time checkbox to change only the default entry. On systems with protected boot files (including Fedora), Bootlane offers to read them through the administrator password dialog. This read does not change settings. You can also use **Read as administrator** directly. Protected previews may ask for authentication again. The firmware view lets you move existing boot priorities up and down.
 
 Bootlane stays open as your normal user; administrator commands use the system password dialog. If you change both timeout and default, they are saved sequentially. If a later setting fails, an earlier successful setting remains saved. The CLI can be used to restore it. No automatic reboot occurs.
 
@@ -82,11 +82,11 @@ Use the four-digit IDs shown by efibootmgr. Existing priorities omitted from you
 
 Coverage is based on bootloader interfaces and conventional paths, **not a completed hardware/distribution certification matrix**. Custom layouts, immutable installations, older bootctl versions, and other bootloaders may require adaptation. Mount your actual /boot and EFI partition first; do not run from a live image or chroot without verifying the target. Bootlane does not install or replace a bootloader.
 
-GRUB requires one unambiguous `/boot/grub/grub.cfg` or `/boot/grub2/grub.cfg`. It never regenerates an EFI vendor stub. It lists stable IDs in generated GRUB menus and BLS files. Dynamically generated or unusual menu layouts may not be listed; inspect the chosen entry before rebooting. Direct GRUB IDs select a fixed kernel entry rather than automatically following future kernel upgrades.
+GRUB distinguishes protected files from missing files and accepts symlink aliases for the same configuration. It requires one unambiguous `/boot/grub/grub.cfg` or `/boot/grub2/grub.cfg`. It never regenerates an EFI vendor stub. It lists stable IDs in generated GRUB menus and BLS files. Dynamically generated or unusual menu layouts may not be listed; inspect the chosen entry before rebooting. Direct GRUB IDs select a fixed kernel entry rather than automatically following future kernel upgrades.
 
 ## Backups and recovery
 
-Before GRUB changes, Bootlane saves timestamped copies beside `/etc/default/grub` and the generated `grub.cfg`. It regenerates to a temporary file, checks GRUB syntax, then replaces the menu. Generation or validation failures restore both files. Keep the reported backups until you have booted successfully. For manual recovery, copy each reported backup over its original path using sudo. If the machine cannot boot, perform this from a recovery environment with the target filesystems mounted.
+Before GRUB changes, Bootlane saves timestamped copies beside `/etc/default/grub` and the generated `grub.cfg`. It regenerates to a temporary file, checks GRUB syntax, then replaces the menu while preserving extended attributes, including SELinux labels. Generation or validation failures restore both files. Keep the reported backups until you have booted successfully. For manual recovery, copy each reported backup over its original path using sudo. If the machine cannot boot, perform this from a recovery environment with the target filesystems mounted.
 
 GRUB configuration generation executes your distribution's installed scripts. Custom scripts can have side effects outside the two backed-up files. Later grub.d settings that explicitly override requested values cause Bootlane to stop. Fedora automatic menu hiding also causes it to stop with the command needed to disable that setting; that separate change is not backed up by Bootlane.
 

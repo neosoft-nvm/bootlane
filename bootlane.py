@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,9 @@ import tempfile
 os.environ['PATH'] = '/usr/sbin:/usr/bin:/sbin:/bin'
 
 class Error(Exception):
+    pass
+
+class PermissionRequired(Error):
     pass
 
 def run(*args):
@@ -41,6 +45,9 @@ def atomic(path, text):
             os.fsync(f.fileno())
         os.chmod(tmp, stat.st_mode & 0o777)
         os.chown(tmp, stat.st_uid, stat.st_gid)
+        # Preserve security metadata, including SELinux labels on Fedora.
+        for name in os.listxattr(path):
+            os.setxattr(tmp, name, os.getxattr(path, name))
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -84,9 +91,27 @@ def grub_entries(text):
 
 def grub_config():
     paths = [Path('/boot/grub/grub.cfg'), Path('/boot/grub2/grub.cfg')]
-    found = [p for p in paths if p.is_file()]
-    if len(found) != 1:
-        raise Error('Cannot identify a unique GRUB configuration; mount /boot and remove ambiguity.')
+    found = []
+    for path in paths:
+        try:
+            info = path.stat()
+        except PermissionError as exc:
+            raise PermissionRequired(
+                f'Administrator access is needed to read {path}. '
+                'Use Read as administrator in the desktop app, or sudo for the CLI.'
+            ) from exc
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            # Some distributions provide aliases for the same configuration.
+            if not any(path.samefile(previous) for previous in found):
+                found.append(path)
+    if not found:
+        raise Error('No GRUB configuration found in /boot/grub or /boot/grub2. '
+                    'Check that the installed system’s /boot partition is mounted.')
+    if len(found) > 1:
+        raise Error('Two different GRUB configurations were found in /boot/grub and /boot/grub2. '
+                    'Resolve which bootloader configuration is active before applying changes.')
     return found[0]
 
 def detect():
@@ -104,7 +129,12 @@ def entries(loader):
     if loader == 'systemd-boot':
         return [{'id': e['id'], 'title': e.get('title', e['id'])} for e in json.loads(run(program('bootctl'), '--json=short', 'list'))]
     result = grub_entries(grub_config().read_text())
-    for p in sorted(Path('/boot/loader/entries').glob('*.conf')):
+    bls_dir = Path('/boot/loader/entries')
+    try:
+        bls_files = sorted(p for p in bls_dir.iterdir() if p.suffix == '.conf')
+    except FileNotFoundError:
+        bls_files = []
+    for p in bls_files:
         title = next((l[6:].strip() for l in p.read_text().splitlines() if l.startswith('title ')), p.stem)
         result.append({'id': p.stem, 'title': title})
     # IDs with unresolved GRUB expressions are deliberately omitted.
@@ -229,6 +259,9 @@ def require_root():
 if __name__ == '__main__':
     try:
         main()
+    except (PermissionRequired, PermissionError) as exc:
+        print('Administrator access required: ' + str(exc), file=sys.stderr)
+        sys.exit(3)
     except (Error, OSError, ValueError) as exc:
         print('Error: ' + str(exc), file=sys.stderr)
         sys.exit(1)
